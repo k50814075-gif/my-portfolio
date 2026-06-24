@@ -1,0 +1,9 @@
+{
+  "name": "my-yahoo-portfolio",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Personal stock portfolio dashboard with Yahoo Finance serverless functions",
+  "engines": {
+    "node": ">=20"
+  }
+}
