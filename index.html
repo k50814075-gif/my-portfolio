@@ -157,15 +157,62 @@ const $=id=>document.getElementById(id);const storage=localStorage;const COLORS=
 const defaultState={cashKrw:16320000,cashUsd:0,holdings:[{id:'h1',name:'현대차',symbol:'005380.KS',market:'KR',currency:'KRW',quantity:40,avgPrice:750000},{id:'h2',name:'Micron Technology',symbol:'MU',market:'US',currency:'USD',quantity:120,avgPrice:120},{id:'h3',name:'NVIDIA',symbol:'NVDA',market:'US',currency:'USD',quantity:55,avgPrice:146.2}],transactions:[{id:'t1',date:'2026-06-05',type:'BUY',name:'현대차',symbol:'005380.KS',market:'KR',currency:'KRW',quantity:40,price:750000,fee:0},{id:'t2',date:'2026-05-20',type:'BUY',name:'Micron Technology',symbol:'MU',market:'US',currency:'USD',quantity:120,price:120,fee:2.5},{id:'t3',date:'2026-04-10',type:'BUY',name:'NVIDIA',symbol:'NVDA',market:'US',currency:'USD',quantity:55,price:146.2,fee:1.7}],snapshots:[]};
 const demoQuotes=[{symbol:'005380.KS',name:'Hyundai Motor Company',shortName:'현대차',price:720000,previousClose:727000,currency:'KRW',exchange:'KSE',marketState:'CLOSED',marketTime:'2026-06-23T06:30:00.000Z',source:'Demo'},{symbol:'MU',name:'Micron Technology, Inc.',shortName:'Micron',price:145,previousClose:143.8,currency:'USD',exchange:'NasdaqGS',marketState:'REGULAR',marketTime:'2026-06-23T13:05:00.000Z',source:'Demo'},{symbol:'NVDA',name:'NVIDIA Corporation',shortName:'NVIDIA',price:171.4,previousClose:169.3,currency:'USD',exchange:'NasdaqGS',marketState:'REGULAR',marketTime:'2026-06-23T13:05:00.000Z',source:'Demo'},{symbol:'KRW=X',name:'USD/KRW',shortName:'USD/KRW',price:1469.97,previousClose:1471.22,currency:'KRW',exchange:'CCY',marketState:'REGULAR',marketTime:'2026-06-23T13:05:00.000Z',source:'Demo'}];
 function normalizeState(input){const normalized=input&&typeof input==='object'?input:structuredClone(defaultState);normalized.cashKrw=Number(normalized.cashKrw)||0;normalized.cashUsd=Number(normalized.cashUsd)||0;normalized.holdings=Array.isArray(normalized.holdings)?normalized.holdings:[];normalized.transactions=Array.isArray(normalized.transactions)?normalized.transactions:[];normalized.snapshots=Array.isArray(normalized.snapshots)?normalized.snapshots:[];return normalized}
-let state=normalizeState(JSON.parse(storage.getItem('directPortfolioState')||'null')||structuredClone(defaultState));let quotes=JSON.parse(storage.getItem('directQuoteCache')||'null')||structuredClone(demoQuotes);let settings=JSON.parse(storage.getItem('directPortfolioSettings')||'null')||{interval:3,fallback:'cache'};let allocationSort=storage.getItem('directAllocationSort')||'DESC';let refreshTimer=null;let searchTimer=null;let connectionMode='demo';let lastSuccess=storage.getItem('directQuoteUpdated')||'';
+function parseStoredJson(key,fallback){try{const raw=storage.getItem(key);return raw?JSON.parse(raw):fallback}catch(error){console.error(`저장 데이터 읽기 실패: ${key}`,error);return fallback}}function loadPortfolioState(){const current=parseStoredJson('directPortfolioState',null);if(current)return normalizeState(current);const backup=parseStoredJson('directPortfolioStateBackup',null);if(backup)return normalizeState(backup);return structuredClone(defaultState)}
+let state=loadPortfolioState();let quotes=parseStoredJson('directQuoteCache',null)||structuredClone(demoQuotes);let settings=parseStoredJson('directPortfolioSettings',null)||{interval:3,fallback:'cache'};let allocationSort=storage.getItem('directAllocationSort')||'DESC';let refreshTimer=null;let searchTimer=null;let connectionMode='demo';let lastSuccess=storage.getItem('directQuoteUpdated')||'';
 const titles={dashboard:'내 투자 현황',holdings:'보유종목',transactions:'거래내역',analysis:'포트폴리오 분석',data:'시세와 데이터 백업'};
-function persist(){storage.setItem('directPortfolioState',JSON.stringify(state))}function persistQuotes(){storage.setItem('directQuoteCache',JSON.stringify(quotes))}function fmtKrw(v){return `${v<0?'-':''}₩ ${Math.abs(Math.round(v)).toLocaleString('ko-KR')}`}function fmtUsd(v){return `${v<0?'-':''}$ ${Math.abs(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}`}function fmtPrice(v,c){return c==='USD'?fmtUsd(v):fmtKrw(v)}function pct(v){return `${v>=0?'+':''}${Number(v||0).toFixed(2)}%`}function valClass(v){return v>=0?'positive':'negative'}
+function persist(){const previous=storage.getItem('directPortfolioState');if(previous)storage.setItem('directPortfolioStateBackup',previous);storage.setItem('directPortfolioState',JSON.stringify(state))}function persistQuotes(){storage.setItem('directQuoteCache',JSON.stringify(quotes))}function fmtKrw(v){return `${v<0?'-':''}₩ ${Math.abs(Math.round(v)).toLocaleString('ko-KR')}`}function fmtUsd(v){return `${v<0?'-':''}$ ${Math.abs(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}`}function fmtPrice(v,c){return c==='USD'?fmtUsd(v):fmtKrw(v)}function pct(v){return `${v>=0?'+':''}${Number(v||0).toFixed(2)}%`}function valClass(v){return v>=0?'positive':'negative'}
 function getQuote(s){return quotes.find(q=>String(q.symbol).toUpperCase()===String(s).toUpperCase())}function fx(){return Number(getQuote('KRW=X')?.price)||1469.97}function price(h){return Number(getQuote(h.symbol)?.price)||(settings.fallback==='cost'?h.avgPrice:h.avgPrice)}function prev(h){return Number(getQuote(h.symbol)?.previousClose)||price(h)}function value(h){return h.quantity*price(h)*(h.currency==='USD'?fx():1)}function cost(h){return h.quantity*h.avgPrice*(h.currency==='USD'?fx():1)}function day(h){return h.quantity*(price(h)-prev(h))*(h.currency==='USD'?fx():1)}
 function cashUsdKrw(){return state.cashUsd*fx()}function cashTotalKrw(){return state.cashKrw+cashUsdKrw()}function totals(){const stock=state.holdings.reduce((s,h)=>s+value(h),0),basis=state.holdings.reduce((s,h)=>s+cost(h),0),d=state.holdings.reduce((s,h)=>s+day(h),0),cash=cashTotalKrw();return{value:stock+cash,cost:basis+cash,profit:stock-basis,day:d,rate:basis?(stock-basis)/basis*100:0,dayRate:(stock-d)?d/(stock-d)*100:0}}
 function setStatus(mode,title,sub){connectionMode=mode;const cls=mode==='live'?'live':mode==='error'?'error':'';['sideDot','topDot','heroDot'].forEach(id=>$(id).className=`dot ${cls}`);$('sideStatus').textContent=title;$('topStatus').textContent=title;$('heroStatus').textContent=title;$('topUpdated').textContent=sub;$('dataUpdated').textContent=lastSuccess?formatDateTime(lastSuccess):sub}
 function formatDateTime(v){if(!v)return '-';const d=new Date(v);return Number.isNaN(d.getTime())?String(v):new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(d)}
 async function refreshQuotes(manual=false){const btn=$('refreshBtn');btn.classList.add('loading');const symbols=[...new Set([...state.holdings.map(h=>h.symbol),'KRW=X'])].join(',');try{if(location.protocol==='file:')throw new Error('배포된 웹사이트 주소에서 접속해야 시세 함수가 동작합니다.');const res=await fetch(`/api/quotes?symbols=${encodeURIComponent(symbols)}`,{cache:'no-store'});if(!res.ok)throw new Error(`시세 서버 오류 ${res.status}`);const data=await res.json();if(!data.quotes?.length)throw new Error('받은 시세가 없습니다.');const old=new Map(quotes.map(q=>[q.symbol,q]));data.quotes.forEach(q=>old.set(q.symbol,q));quotes=[...old.values()];persistQuotes();lastSuccess=data.fetchedAt||new Date().toISOString();storage.setItem('directQuoteUpdated',lastSuccess);setStatus('live','Yahoo 시세 연결됨',`${data.quotes.length}개 종목 · ${formatDateTime(lastSuccess)}`);render();if(manual)toast('최근 시세를 갱신했어.')}catch(e){console.error(e);if(!quotes.length)quotes=structuredClone(demoQuotes);setStatus('error','마지막 시세 사용 중',e.message);render();if(manual)toast(e.message)}finally{btn.classList.remove('loading')}}
 function saveSnapshot(total){const today=new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Seoul'});state.snapshots=Array.isArray(state.snapshots)?state.snapshots:[];const found=state.snapshots.find(x=>x.date===today);if(found)found.value=Math.round(total);else state.snapshots.push({date:today,value:Math.round(total)});state.snapshots=state.snapshots.sort((a,b)=>a.date.localeCompare(b.date)).slice(-180);persist()}
+function render(){
+  const t=totals();
+  saveSnapshot(t.value);
+
+  $('totalValue').textContent=fmtKrw(t.value);
+  $('totalProfit').textContent=fmtKrw(t.profit);
+  $('totalProfit').className=`stat-value ${valClass(t.profit)}`;
+  $('totalRate').textContent=pct(t.rate);
+  $('totalRate').className=valClass(t.rate);
+  $('totalCost').textContent=`원금 ${fmtKrw(t.cost)}`;
+
+  $('dayProfit').textContent=fmtKrw(t.day);
+  $('dayProfit').className=`stat-value ${valClass(t.day)}`;
+  $('dayRate').textContent=pct(t.dayRate);
+  $('dayRate').className=valClass(t.day);
+
+  const fxQuote=getQuote('KRW=X');
+  const fxChange=fxQuote?.previousClose
+    ? ((fxQuote.price-fxQuote.previousClose)/fxQuote.previousClose*100)
+    : 0;
+
+  $('fxValue').textContent=fx().toLocaleString('ko-KR',{maximumFractionDigits:2});
+  $('fxChange').textContent=pct(fxChange);
+  $('fxChange').className=valClass(fxChange);
+
+  $('chartCurrent').textContent=fmtKrw(t.value);
+  $('chartRate').textContent=pct(t.rate);
+  $('chartRate').className=valClass(t.rate);
+  $('intervalText').textContent=`${settings.interval}분`;
+
+  renderChart();
+  renderMarketCards();
+  $('dashboardHoldings').innerHTML=state.holdings.map(holdingRow).join('');
+  renderHoldings(t);
+  renderTransactions();
+  renderAnalysis(t);
+  renderQuotes();
+
+  $('cashKrwInput').value=Math.round(state.cashKrw);
+  $('cashUsdInput').value=Number(state.cashUsd||0);
+  $('cashConvertedPreview').textContent=
+    `${fmtKrw(cashTotalKrw())} = ${fmtKrw(state.cashKrw)} + ` +
+    `${fmtUsd(state.cashUsd)} × ${fx().toLocaleString('ko-KR',{maximumFractionDigits:2})}`;
+  $('allocationSort').value=allocationSort;
+}
+
 function compactKrwAxis(value){
   const abs=Math.abs(value);
   const sign=value<0?'-':'';
@@ -316,7 +363,7 @@ $('refreshBtn').addEventListener('click',()=>refreshQuotes(true));$('dataRefresh
 $('symbolSearch').addEventListener('input',e=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>searchYahoo(e.target.value),350)});$('searchResults').addEventListener('click',e=>{const b=e.target.closest('[data-symbol]');if(!b)return;$('tradeName').value=b.dataset.name;$('tradeSymbol').value=b.dataset.symbol;const kr=/\.KS$|\.KQ$/i.test(b.dataset.symbol);$('tradeMarket').value=kr?'KR':'US';$('tradeCurrency').value=b.dataset.currency||(kr?'KRW':'USD');$('searchResults').classList.remove('show');$('symbolSearch').value=`${b.dataset.name} (${b.dataset.symbol})`});$('tradeType').addEventListener('change',()=>{$('priceLabel').textContent=$('tradeType').value==='DIVIDEND'?'배당금 총액':'거래단가'});
 $('exportBtn').addEventListener('click',exportBackup);$('importBtn').addEventListener('click',()=>$('importFile').click());$('importFile').addEventListener('change',e=>{if(e.target.files[0])importBackup(e.target.files[0]);e.target.value=''});$('allocationSort').addEventListener('change',e=>{allocationSort=e.target.value;storage.setItem('directAllocationSort',allocationSort);renderAnalysis(totals())});['cashKrwInput','cashUsdInput'].forEach(id=>$(id).addEventListener('input',()=>{const krwValue=Number($('cashKrwInput').value||0),usdValue=Number($('cashUsdInput').value||0);$('cashConvertedPreview').textContent=`${fmtKrw(krwValue+usdValue*fx())} = ${fmtKrw(krwValue)} + ${fmtUsd(usdValue)} × ${fx().toLocaleString('ko-KR',{maximumFractionDigits:2})}`}));$('saveCashBtn').addEventListener('click',()=>{const krwValue=Number($('cashKrwInput').value||0),usdValue=Number($('cashUsdInput').value||0);if(krwValue<0||usdValue<0||!Number.isFinite(krwValue)||!Number.isFinite(usdValue))return toast('예수금을 확인해줘.');state.cashKrw=krwValue;state.cashUsd=usdValue;persist();render();toast('KRW·USD 예수금을 저장했어.')});$('resetBtn').addEventListener('click',()=>{if(!confirm('모든 데이터를 샘플 상태로 초기화할까?'))return;state=structuredClone(defaultState);quotes=structuredClone(demoQuotes);settings={interval:3,fallback:'cache'};allocationSort='DESC';lastSuccess='';persist();persistQuotes();storage.removeItem('directQuoteUpdated');storage.setItem('directAllocationSort',allocationSort);storage.setItem('directPortfolioSettings',JSON.stringify(settings));schedule();render();refreshQuotes(false);toast('초기화했어.')});
 document.addEventListener('click',e=>{const rh=e.target.closest('[data-remove-holding]');if(rh){const h=state.holdings.find(x=>x.id===rh.dataset.removeHolding);if(h&&confirm(`${h.name} 보유종목을 삭제할까? 거래내역은 유지돼.`)){state.holdings=state.holdings.filter(x=>x.id!==h.id);persist();render();refreshQuotes(false)}}const rt=e.target.closest('[data-remove-tx]');if(rt){if(confirm('이 거래 기록을 삭제할까? 보유잔고는 자동으로 되돌리지 않아.')){state.transactions=state.transactions.filter(x=>x.id!==rt.dataset.removeTx);persist();render()}}});
-if(storage.getItem('directTheme')==='light')document.body.classList.add('light');$('tradeDate').value=new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Seoul'});$('todayText').textContent=new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',year:'numeric',month:'long',day:'numeric',weekday:'short'}).format(new Date())+' · KST';setStatus('demo','시세 확인 중','Yahoo Finance 연결 확인 중');render();schedule();refreshQuotes(false);
+if(storage.getItem('directTheme')==='light')document.body.classList.add('light');$('tradeDate').value=new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Seoul'});$('todayText').textContent=new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',year:'numeric',month:'long',day:'numeric',weekday:'short'}).format(new Date())+' · KST';try{setStatus('demo','시세 확인 중','Yahoo Finance 연결 확인 중');render();schedule();refreshQuotes(false)}catch(error){console.error(error);setStatus('error','화면 표시 오류','브라우저 저장 데이터는 유지되어 있습니다.');toast(`화면 오류: ${error.message}`)}
 </script>
 </body>
 </html>
